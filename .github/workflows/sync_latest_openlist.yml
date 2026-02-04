@@ -1,27 +1,43 @@
 name: sync_latest_openlist
 
 on:
-  # 支持手动触发
   workflow_dispatch:
-  # 每小时执行一次（整点 UTC Time）
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "0 * * * *" # 每小时执行一次
 
 jobs:
-  build:
+  check_and_sync:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write  # 必须开启此权限才能触发另一个 workflow
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: check_openlist_has_new_version
+      - name: Compare Versions and Trigger Build
         run: |
-          export CURRENT_OPENLIST_VERSION=$(curl -k -sL https://api.github.com/repos/LeoHaoVIP/AListLiteAndroid/releases/latest | grep '"name": "From OpenList v' | cut -d'"' -f4 | cut -d'v' -f2)
-          export LATEST_OPENLIST_VERSION=$(curl -k -sL https://api.github.com/repos/OpenListTeam/OpenList/releases/latest | grep '"tag_name": ".*"' | cut -d'"' -f4 | cut -d'v' -f2)
-          echo "CURRENT_OPENLIST_VERSION: " ${CURRENT_OPENLIST_VERSION}
-          echo "LATEST_OPENLIST_VERSION: " ${LATEST_OPENLIST_VERSION}
-          if [ "$LATEST_OPENLIST_VERSION" \> "$CURRENT_OPENLIST_VERSION" ]; then
-              echo "OpenList Need to Be Updated!"
-              gh workflow run build_and_release.yml -R LeoHaoVIP/AListLiteAndroid
+          # 1. 获取当前仓库 (Your Repo) 最新的 Release 名字中的版本号
+          # 使用 github.repository 变量确保始终指向当前运行脚本的仓库
+          CURRENT_OPENLIST_VERSION=$(curl -sL https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.name' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          
+          # 2. 获取上游 (Upstream) 官方仓库的最新的 Tag 版本
+          LATEST_OPENLIST_VERSION=$(curl -sL https://api.github.com/repos/OpenListTeam/OpenList/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+
+          echo "CURRENT_OPENLIST_VERSION: ${CURRENT_OPENLIST_VERSION:-'NoneFound'}"
+          echo "LATEST_OPENLIST_VERSION: ${LATEST_OPENLIST_VERSION}"
+
+          # 3. 兜底判断：如果当前仓库还没有任何 Release，则直接触发更新
+          if [ -z "$CURRENT_OPENLIST_VERSION" ]; then
+              echo "No local release found. Triggering first build..."
+              gh workflow run build_and_release.yml --repo ${{ github.repository }}
+              exit 0
+          fi
+
+          # 4. 使用 sort -V 比较版本
+          # 如果输入两个版本，sort -V 排序后第一行是 LATEST，说明 CURRENT >= LATEST，不需要更新
+          if [ "$(printf '%s\n%s' "$CURRENT_OPENLIST_VERSION" "$LATEST_OPENLIST_VERSION" | sort -V | head -n1)" != "$LATEST_OPENLIST_VERSION" ]; then
+              echo "Status: New version detected! Triggering build..."
+              gh workflow run build_and_release.yml --repo ${{ github.repository }}
           else
-              echo "No Need to Update."
+              echo "Status: No Need to Update."
           fi
