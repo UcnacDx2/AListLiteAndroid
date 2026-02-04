@@ -68,15 +68,26 @@ jobs:
 
       - name: 7-CommitChanges
         run: |
-          git config --global user.email "actions@github.com"
-          git config --global user.name "GitHub Actions"
-          git add .
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Auto Commit: Update version to ${{ env.APP_VERSION }}"
-            git push origin HEAD:${{ github.ref }}
-          fi
+                git config --global user.email "actions@github.com"
+                git config --global user.name "GitHub Actions"
+                
+                # 1. 先暂存所有更改
+                git add .
+                
+                # 2. 检查是否有需要提交的内容
+                if git diff --cached --quiet; then
+                  echo "No changes to commit"
+                else
+                  git commit -m "Auto Commit: Update version to ${{ env.APP_VERSION }}"
+                  
+                  # 3. 关键：拉取远程最新更改并变基
+                  # --autostash 可以处理拉取时本地已有修改的情况
+                  # 使用 ${{ github.ref_name }} 动态获取分支名（master 或 main）
+                  git pull --rebase --autostash origin ${{ github.ref_name }}
+                  
+                  # 4. 推送
+                  git push origin ${{ github.ref_name }}
+                fi
 
       - name: 8-ReplaceBuglyAppID
         run: |
