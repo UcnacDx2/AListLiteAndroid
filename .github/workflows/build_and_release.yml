@@ -38,9 +38,13 @@ jobs:
         run: |
           LATEST_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-beta[0-9]+)?(-auto[0-9]+)?$' | head -n 1 || echo "v1.0.0")
           echo "Latest tag: $LATEST_TAG"
+          base_version=""
+          auto_num=""
           if [[ $LATEST_TAG =~ ^(v[0-9]+\.[0-9]+\.[0-9]+(-beta[0-9]+)?)(-auto([0-9]+))?$ ]]; then
             base_version="${BASH_REMATCH[1]}"
             auto_num="${BASH_REMATCH[4]}"
+          else
+            base_version="v1.0.0"
           fi
           if [[ -n "$auto_num" ]]; then
             next_auto=$((auto_num + 1))
