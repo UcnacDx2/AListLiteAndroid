@@ -16,27 +16,22 @@ jobs:
     steps:
       - name: Compare Versions and Trigger Build
         run: |
-          # 1. 获取当前仓库 (Your Repo) 最新的 Release 名字中的版本号
-          # 使用 github.repository 变量确保始终指向当前运行脚本的仓库
-          CURRENT_OPENLIST_VERSION=$(curl -sL https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.name' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          # 1. 获取当前仓库版本，加上 || true 防止 grep 匹配不到时直接报错退出
+          raw_name=$(curl -sL https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.name // empty')
+          CURRENT_OPENLIST_VERSION=$(echo "$raw_name" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
           
-          # 2. 获取上游 (Upstream) 官方仓库的最新的 Tag 版本
+          # 2. 获取上游官方版本
           LATEST_OPENLIST_VERSION=$(curl -sL https://api.github.com/repos/OpenListTeam/OpenList/releases/latest | jq -r '.tag_name' | sed 's/^v//')
 
           echo "CURRENT_OPENLIST_VERSION: ${CURRENT_OPENLIST_VERSION:-'NoneFound'}"
           echo "LATEST_OPENLIST_VERSION: ${LATEST_OPENLIST_VERSION}"
 
-          # 3. 兜底判断：如果当前仓库还没有任何 Release，则直接触发更新
+          # 3. 如果没找到本地版本，或者是新版本
           if [ -z "$CURRENT_OPENLIST_VERSION" ]; then
-              echo "No local release found. Triggering first build..."
+              echo "Status: No local release found or tag format mismatch. Triggering build..."
               gh workflow run build_and_release.yml --repo ${{ github.repository }}
-              exit 0
-          fi
-
-          # 4. 使用 sort -V 比较版本
-          # 如果输入两个版本，sort -V 排序后第一行是 LATEST，说明 CURRENT >= LATEST，不需要更新
-          if [ "$(printf '%s\n%s' "$CURRENT_OPENLIST_VERSION" "$LATEST_OPENLIST_VERSION" | sort -V | head -n1)" != "$LATEST_OPENLIST_VERSION" ]; then
-              echo "Status: New version detected! Triggering build..."
+          elif [ "$(printf '%s\n%s' "$CURRENT_OPENLIST_VERSION" "$LATEST_OPENLIST_VERSION" | sort -V | head -n1)" != "$LATEST_OPENLIST_VERSION" ]; then
+              echo "Status: New version $LATEST_OPENLIST_VERSION detected! (Local: $CURRENT_OPENLIST_VERSION). Triggering build..."
               gh workflow run build_and_release.yml --repo ${{ github.repository }}
           else
               echo "Status: No Need to Update."
