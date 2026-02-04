@@ -9,6 +9,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     if: "!contains(github.ref, '-auto')"
+    permissions:
+      contents: write  # 必须开启写入权限以推送 Tag 和 Release
     env:
       GH_TOKEN: ${{ github.token }}
 
@@ -16,7 +18,7 @@ jobs:
       - name: 1-CheckoutCode
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 拉取所有历史以获取标签
+          fetch-depth: 0
 
       - name: 2-SetupGoEnv
         uses: actions/setup-go@v4
@@ -31,41 +33,34 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: 4-GetLatestTag
-        id: get_latest_tag
+      - name: 4-GenerateSelfVersion
+        id: version_gen
         run: |
-          LATEST_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-beta[0-9]+)?(-auto[0-9]+)?$' | head -n 1)
-          echo "Latest tag: $LATEST_TAG"
-          # 正则匹配：明确分组（分组1=基础版本，分组4=auto编号）
-          if [[ $LATEST_TAG =~ ^(v[0-9]+\.[0-9]+\.[0-9]+(-beta[0-9]+)?)(-auto([0-9]+))?$ ]]; then
-            base_version="${BASH_REMATCH[1]}"  # 基础版本（如 v1.3.4-beta4 或 v1.0.0）
-            auto_num="${BASH_REMATCH[4]}"      # 提取分组4（仅数字部分，如 1、2）
-          fi
-          # 计算下一版本
-          if [[ -n "$auto_num" ]]; then
-            # 已有 auto 后缀，递增编号
-            next_auto=$((auto_num + 1))
-            NEW_TAG="${base_version}-auto${next_auto}"
-          else
-            # 无 auto 后缀，新增 auto1
-            NEW_TAG="${base_version}-auto1"
-          fi
+          # 获取上游官方最新的版本号 (例如 4.1.10)
+          UPSTREAM_VER=$(curl -sL https://api.github.com/repos/OpenListTeam/OpenList/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+          
+          # 生成随机/时间戳后缀 (格式: 月日时分，例如 02041230)
+          # 这样能保证每次构建的版本号都是递增且唯一的
+          TIMESTAMP=$(date +%m%d%H%M)
+          
+          # 组合成新的 TAG
+          NEW_TAG="v${UPSTREAM_VER}-auto${TIMESTAMP}"
+          
           echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
+          echo "UPSTREAM_VER=$UPSTREAM_VER" >> $GITHUB_ENV
+          echo "生成的版本标签为: $NEW_TAG"
 
       - name: 5-UpdateVersionInfo
         run: |
-          # 从新标签中提取版本号（去除v前缀）
+          # 提取纯版本号数字
           APP_VERSION=$(echo "${{ env.NEW_TAG }}" | sed 's/^v//')
           echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
-          echo "Updating App version to: ${APP_VERSION}"
-          # 更新 app 模块的 build.gradle 中的版本号
+          
+          # 更新 build.gradle
           sed -i "s/versionName \".*\"/versionName \"${APP_VERSION}\"/" app/build.gradle
-          # OPENLIST 最新版本
-          LATEST_OPENLIST_VERSION=$(curl -k -sL https://api.github.com/repos/OpenListTeam/OpenList/releases/latest | grep '"tag_name": ".*"' | cut -d'"' -f4 | cut -d'v' -f2)
-          echo "LATEST_OPENLIST_VERSION=${LATEST_OPENLIST_VERSION}" >> $GITHUB_ENV
-          echo "Set OpenList version to" ${LATEST_OPENLIST_VERSION}
-          # 更新 Constants.java 中定义的 OpenList 版本号
-          sed -i "s/\(public static String OPENLIST_VERSION = \"\)\([^\";]*\)\(\";\)/\1${LATEST_OPENLIST_VERSION}\3/" app/src/main/java/com/leohao/android/alistlite/util/Constants.java
+          
+          # 更新 Constants.java 中的版本号
+          sed -i "s/\(public static String OPENLIST_VERSION = \"\)\([^\";]*\)\(\";\)/\1${{ env.UPSTREAM_VER }}\3/" app/src/main/java/com/leohao/android/alistlite/util/Constants.java
 
       - name: 6-BuildOpenListArtifacts
         run: |
@@ -76,21 +71,18 @@ jobs:
 
       - name: 7-CommitChanges
         run: |
-          git config --global user.email "2867555086@github.com"
-          git config --global user.name "LeoHaoVIP"
+          git config --global user.email "github-actions[bot]@github.com"
+          git config --global user.name "github-actions[bot]"
           git add .
-          # 检查是否有修改（避免空提交）
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            # 提交修改
-            git commit -m "Auto Commit by GitHub Actions"
-            git push
+            git commit -m "Auto update to version ${{ env.APP_VERSION }}"
+            git push origin HEAD:${{ github.ref_name }}
           fi
 
       - name: 8-ReplaceBuglyAppID
         run: |
-          # 替换 BUGLY APP ID
           sed -i 's/YOUR_BUGLY_APP_ID/${{ secrets.BUGLY_APP_ID }}/g' $GITHUB_WORKSPACE/app/src/main/AndroidManifest.xml
 
       - name: 9-GrantGradlew
@@ -114,20 +106,17 @@ jobs:
 
       - name: 13-CreateNewTag
         run: |
-          git config --global user.email "2867555086@github.com"
-          git config --global user.name "LeoHaoVIP"
-          # 检查标签是否存在，不存在则创建并推送
-          if ! git ls-remote --tags origin | grep -q "refs/tags/${{ env.NEW_TAG }}"; then
-            git tag ${{ env.NEW_TAG }}
-            git push origin ${{ env.NEW_TAG }}
-          fi
+          git tag ${{ env.NEW_TAG }}
+          git push origin ${{ env.NEW_TAG }}
 
       - name: 14-CreateNewRelease
         uses: softprops/action-gh-release@v2
         with:
           draft: false
           tag_name: ${{ env.NEW_TAG }}
-          name: From OpenList v${{ env.LATEST_OPENLIST_VERSION }}
+          name: From OpenList v${{ env.UPSTREAM_VER }} (AutoBuild)
           body: |
-            🚀 【自动构建】同步 OpenList v${{ env.LATEST_OPENLIST_VERSION }}
-          files: app/build/outputs/apk/release/*${{ env.NEW_TAG }}-*-release-signed.apk
+            🚀 自动构建同步
+            - 同步上游版本: v${{ env.UPSTREAM_VER }}
+            - 本次构建版本: ${{ env.NEW_TAG }}
+          files: app/build/outputs/apk/release/*-release-signed.apk
