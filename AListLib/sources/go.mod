@@ -126,7 +126,7 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.uber.org/mock v0.5.0 // indirect
 	golang.org/x/exp v0.0.0-20250606033433-dcc06ee1d476 // indirect
-	golang.org/x/mobile v0.0.0-20260203041319-574ceaa2f723 // indirect
+	golang.org/x/mobile v0.0.0-20260204172633-1dceadbbeea3 // indirect
 	golang.org/x/mod v0.32.0 // indirect
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 )
